@@ -141,13 +141,7 @@ def action_to_bet_range(index):
         return (150,175)
     else:
         return (175,205)    
-"""
-Simple example pokerbot, written in python.
-
-This is an example of a bare bones pokerbot. It only sets up the socket
-necessary to connect with the engine and then always returns the same action.
-It is meant as an example of how a pokerbot should communicate with the engine.
-"""
+    
 class Player:
     def __init__(self):
 
@@ -201,13 +195,17 @@ class Player:
                 canbet = False
                 canraise = False
                 to_call = 0
+                
+                # Get relevant information from engine
                 self.potSize = data[1]
                 self.numBoardCards = int(data[2])
-                a = 3+self.numBoardCards
-                self.boardCards = [data[i] for i in range(3,a)]
-                self.numPrevActions = int(data[a])
-                b = a+1+self.numPrevActions             
-                self.prevActions = [data[i] for i in range(a+1,b)] 
+                board_card_increment = 3+self.numBoardCards
+                self.boardCards = [data[i] for i in range(3,board_card_increment)]
+                self.numPrevActions = int(data[board_card_increment])
+                prev_action_increment = board_card_increment+1+self.numPrevActions             
+                self.prevActions = [data[i] for i in range(board_card_increment+1,prev_action_increment)]
+                
+                # Handle discards
                 if self.last_discard != 0:
                     for action in self.prevActions:
                         action_split = action.split(':')
@@ -216,6 +214,8 @@ class Player:
                                 self.holeCard1=action_split[2]
                             if self.last_discard==2:
                                 self.holeCard2=action_split[2]
+                
+                # Get Previous Opponent Bet if there was one
                 for action in self.prevActions:
                     action_split = action.split(':')
                     if self.otherName in action:
@@ -224,12 +224,13 @@ class Player:
                             committed = float(int(self.potSize)-raised)/2
                             to_call = raised
                             self.opponent_action=bet_to_action_opp(committed+raised)
-                self.numLegalActions = int(data[b])
+                            
+                self.numLegalActions = int(data[prev_action_increment])
+                legal_action_increment = prev_action_increment+1
+                legal_action_increment_end = legal_action_increment+self.numLegalActions
+                self.legalActions = [data[i] for i in range(legal_action_increment,legal_action_increment_end)]
 
-                a = b+1
-                b = a+self.numLegalActions
-                self.legalActions = [data[i] for i in range(a,b)]
-
+                # Figure out legal actions
                 discard_round = False
                 for action in self.legalActions:
                     if 'BET' in action:
@@ -252,9 +253,10 @@ class Player:
                         cancheck = True
                     if 'CALL' in action:
                         cancall = True
-                print cancall,canfold,canraise,canbet,discard_round
-                textaction = 'CHECK\n'
+                        
+                textaction = 'CHECK\n' # If all logic calls through the player should check
                 if discard_round:
+                    # Calculations for discard equity
                     hand_probs = return_probs([self.holeCard1,self.holeCard2]+self.boardCards)
                     drop_1_probs = return_probs([self.holeCard2]+self.boardCards)
                     drop_2_probs = return_probs([self.holeCard1]+self.boardCards)
@@ -280,6 +282,7 @@ class Player:
                 else:
                     action = 0
 
+                    # Initialize state
                     player_1_cards = np.zeros(52)
                     board          = np.zeros(52)
                     player_1_cards += np.eye(52)[card_to_num(self.holeCard1)]
@@ -292,11 +295,12 @@ class Player:
                     state = np.append(np.append(np.append(player_1_cards,board),opponent_action),self.last_action)
                     prediction = np.ones(8)
 
-
-                    print(self.opponent_action)
-                    print(self.last_action)
                     prediction,s_t1,s_t2 = model.forward_prop_step(state,s_t1,s_t2)
                     action = np.argmax(prediction)
+                    # Make prediction, during training, make a random action some percentage of the time
+#                     if np.random.randint(100)<random_prob:
+#                         action = np.random.randint(8)
+
                     self.last_action = np.eye(8)[action]
                     if len(self.states)>0:
                         self.states += [state]
@@ -317,33 +321,29 @@ class Player:
                     print action
                     for e in prediction:
                         print e
-
+                    # Logic to allow bot to commit on the position it has decided on
                     if cancall:
                         if canfold and (committed+float(to_call))>rangemax:
                             textaction = 'FOLD\n'
                         elif canraise and rangemax-committed-to_call>self.minBet:
-                            a = max(rangemin,committed)-committed
-                            b = rangemax-committed
-                            print(a,b)
-                            b= min(self.maxBet,b)
-                            a = max(self.minBet,a)
-                            bet= np.random.randint(a,b) if a!=b else a
+                            bet_low = max(rangemin,committed)-committed
+                            bet_high = rangemax-committed
+                            bet_high = min(self.maxBet,bet_high)
+                            bet_low = max(self.minBet,bet_low)
+                            bet= np.random.randint(bet_low,bet_high) if bet_low!=bet_high else bet_low
                             textaction = 'RAISE:{}\n'.format(bet)
                         else:
                             textaction = 'CALL\n'
                     else:
                         if canbet and rangemax-committed-to_call>self.minBet:
-                            a = max(rangemin,committed)-committed
-                            b = rangemax-committed
-                            print(a,b)
-                            b= min(self.maxBet,b)
-                            a = max(self.minBet,a)
-                            bet= np.random.randint(a,b) if a!=b else a
+                            bet_low = max(rangemin,committed)-committed
+                            bet_high = rangemax-committed
+                            bet_high = min(self.maxBet,bet_high)
+                            bet_low = max(self.minBet,bet_low)
+                            bet= np.random.randint(bet_low,bet_high) if bet_low!=bet_high else bet_low
                             textaction = 'BET:{}\n'.format(bet)
                         else:
                             textaction = 'CHECK\n'
-                print textaction
-                print(time()-start_time)
                 s.send(textaction)
             elif word == "NEWHAND":
                 self.holeCard1 = data[3]
